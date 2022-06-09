@@ -4,10 +4,13 @@
 
 import logging
 import os
-from enum import Enum, auto
+from enum import Enum
 
 import requests
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+
+from api import PetHome
+from api.v1 import PetHomeImpl
 
 PET_HOME_TOKEN = os.environ['PET_HOME_TOKEN']
 PET_HOME_ADDR = os.environ['PET_HOME_ADDR']
@@ -15,9 +18,16 @@ PET_HOME_PORT = os.environ['PET_HOME_PORT']
 
 
 class Action(Enum):
-    LOGIN_ENTERING = auto()
-    PASSWORD_ENTERING = auto()
-    MAIN = auto()
+    LOGIN_ENTERING = 'login_entering'
+    PASSWORD_ENTERING = 'password_entering'
+    MAIN = 'main'
+    GET_LIST_OF_ADVERTISEMENTS = 'get_list_of_advertisements'
+    GET_LIST_OF_CREATED_ADVERTISEMENTS = 'get_list_of_created_advertisements'
+    CREATE_AD = 'create_advertisement'
+    DEL_AD = 'delete_advertisement'
+    WAITING_FOR_AD_INFO = 'waiting_for_add_info'
+    WAITING_FOR_AD_ID = 'waiting_for_add_id'
+
 
 # {12345: {'action': Action.LOGIN_ENTERING, 'cache': dict()}}
 users = dict()
@@ -44,16 +54,94 @@ def msg_handler(update, context):
     if action == Action.PASSWORD_ENTERING:
         password = update.message.text
         users[user['id']]['cache']['password'] = password
-        payload = {
-            "username": users[user['id']]['cache']['username'],
-            "password": users[user['id']]['cache']['password']
-        }
-        req = requests.post(f"http://{PET_HOME_ADDR}:{PET_HOME_PORT}/v1/users/auth", json=payload)
-        resp = req.json()
-        # context.bot.send_message(chat_id, f"Your token is {resp['token']}")
-        update.message.reply_text(f"Your token is {resp['token']}")
+
+        try:
+            api: PetHome = PetHomeImpl(
+                users[user['id']]['cache']['username'],
+                users[user['id']]['cache']['password'],
+                PET_HOME_ADDR,
+                PET_HOME_PORT
+            )
+        except Exception:
+            users[user['id']]['action'] = Action.LOGIN_ENTERING
+            update.message.reply_text(f"Authorization is failed. Your login or password is incorrect. Try again.")
+            return
+
+        del users[user['id']]['cache']['username']
+        del users[user['id']]['cache']['password']
+
+        users[user['id']]['cache']['api'] = api
         users[user['id']]['action'] = Action.MAIN
+        update.message.reply_text(f"Send command: {Action.GET_LIST_OF_ADVERTISEMENTS.value}; "
+                                  f"{Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value}; "
+                                  f"{Action.CREATE_AD.value}; {Action.DEL_AD.value}")
         return
+
+    if update.message.text == Action.GET_LIST_OF_ADVERTISEMENTS.value:
+        api: PetHome = users[user['id']]['cache']['api']
+        # TODO page is hardcoded
+        ads = api.get_other_advertisements(1)
+        resp = ""
+        for ad in ads:
+            info = f"""
+Pet name: {ad['pet-name']}
+Signs: {ad['signs']}
+Age: {ad['age']}
+Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
+Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
+
+"""
+            resp = f"{resp}{info}"
+        update.message.reply_text(resp)
+        return
+
+    if update.message.text == Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value:
+        api: PetHome = users[user['id']]['cache']['api']
+        # TODO page is hardcoded
+        ads = api.get_own_advertisements(1)
+        resp = ""
+        for ad in ads:
+            info = f"""
+ID: {ad['id']}
+Pet name: {ad['pet-name']}
+Signs: {ad['signs']}
+Age: {ad['age']}
+Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
+Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
+
+"""
+            resp = f"{resp}{info}"
+        update.message.reply_text(resp)
+        return
+
+    if update.message.text == Action.CREATE_AD.value:
+        update.message.reply_text('Send info using JSON format')
+        users[user['id']]['action'] = Action.WAITING_FOR_AD_INFO
+        return
+
+    if update.message.text == Action.DEL_AD.value:
+        update.message.reply_text('Send advertisement ID')
+        users[user['id']]['action'] = Action.WAITING_FOR_AD_ID
+        return
+
+    if users[user['id']]['action'] == Action.WAITING_FOR_AD_INFO:
+        users[user['id']]['action'] = Action.MAIN
+        api: PetHome = users[user['id']]['cache']['api']
+        # TODO we get in JSON format; we need to do it more easier for users (filling date step by step)
+        ad_info = update.message.text
+        api.create_ad(ad_info)
+        update.message.reply_text('Advertisement has been created')
+        return
+
+    if users[user['id']]['action'] == Action.WAITING_FOR_AD_ID:
+        users[user['id']]['action'] = Action.MAIN
+        api: PetHome = users[user['id']]['cache']['api']
+        # TODO we get in JSON format; we need to do it more easier for users (filling date step by step)
+        ad_id = update.message.text
+        api.delete_ad(ad_id)
+        update.message.reply_text('Advertisement has been deleted')
+        return
+
 
 # Define a few command handlers. These usually take the two arguments update and
 # context. Error handlers also receive the raised TelegramError object in error.
@@ -63,6 +151,7 @@ def start(update, context):
     context.bot.send_message(chat_id, 'Hi! Send your login')
     user = update.message.from_user
     users[user['id']] = {'action': Action.LOGIN_ENTERING, 'cache': dict()}
+
 
 def help(update, context):
     """Send a message when the command /help is issued."""
