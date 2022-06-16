@@ -6,8 +6,8 @@ import logging
 import os
 from enum import Enum
 
-import requests
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
 from api import PetHome
 from api.v1 import PetHomeImpl
@@ -18,15 +18,21 @@ PET_HOME_PORT = os.environ['PET_HOME_PORT']
 
 
 class Action(Enum):
+    WELCOME = 'welcome'
+    REGISTRATION = 'registration'
+    AUTHORIZATION = 'authorization'
     LOGIN_ENTERING = 'login_entering'
     PASSWORD_ENTERING = 'password_entering'
     MAIN = 'main'
+    VIEW_AD = 'view_ad'
+    VIEW_ACCOUNT = 'view_account'
     GET_LIST_OF_ADVERTISEMENTS = 'get_list_of_advertisements'
     GET_LIST_OF_CREATED_ADVERTISEMENTS = 'get_list_of_created_advertisements'
     CREATE_AD = 'create_advertisement'
     DEL_AD = 'delete_advertisement'
     WAITING_FOR_AD_INFO = 'waiting_for_add_info'
     WAITING_FOR_AD_ID = 'waiting_for_add_id'
+    BACK = 'back'
 
 
 # {12345: {'action': Action.LOGIN_ENTERING, 'cache': dict()}}
@@ -39,42 +45,89 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 
+class User(object):
+
+    def __init__(self, msg_id):
+        self.msg_id = msg_id
+        self.cache = dict()
+        self.api: PetHome = None
+        self.current_action = Action.WELCOME
+
+
 def msg_handler(update, context):
     user = update.message.from_user
-    action = users[user['id']]['action']
+    user_id = user['id']
+    u: User = users[user_id]
+    action = u.current_action
+    chat_id = update.message.chat_id
 
     if action == Action.LOGIN_ENTERING:
         username = update.message.text
-        users[user['id']]['cache']['username'] = username
-        # context.bot.send_message(chat_id, 'I have got your login. Please, send me your password')
-        update.message.reply_text('I have got your login. Please, send me your password')
-        users[user['id']]['action'] = Action.PASSWORD_ENTERING
+        u.cache['username'] = username
+        context.bot.delete_message(chat_id=chat_id,
+                                    message_id=update.message.message_id)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Я отримав твій логін. Чекаю на пароль")
+        u.current_action = Action.PASSWORD_ENTERING
         return
 
     if action == Action.PASSWORD_ENTERING:
         password = update.message.text
-        users[user['id']]['cache']['password'] = password
+        context.bot.delete_message(chat_id=chat_id,
+                                   message_id=update.message.message_id)
+        u.cache['password'] = password
 
         try:
             api: PetHome = PetHomeImpl(
-                users[user['id']]['cache']['username'],
-                users[user['id']]['cache']['password'],
+                u.cache['username'],
+                u.cache['password'],
                 PET_HOME_ADDR,
                 PET_HOME_PORT
             )
         except Exception:
-            users[user['id']]['action'] = Action.LOGIN_ENTERING
-            update.message.reply_text(f"Authorization is failed. Your login or password is incorrect. Try again.")
+            u.current_action = Action.LOGIN_ENTERING
+            context.bot.editMessageText(chat_id=chat_id,
+                                        message_id=u.msg_id,
+                                        text="Неправильний логін або пароль")
             return
 
-        del users[user['id']]['cache']['username']
-        del users[user['id']]['cache']['password']
+        del u.cache['username']
+        del u.cache['password']
 
-        users[user['id']]['cache']['api'] = api
-        users[user['id']]['action'] = Action.MAIN
-        update.message.reply_text(f"Send command: {Action.GET_LIST_OF_ADVERTISEMENTS.value}; "
-                                  f"{Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value}; "
-                                  f"{Action.CREATE_AD.value}; {Action.DEL_AD.value}")
+        u.api = api
+        u.current_action = Action.MAIN
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
+                InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
+                InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Головна",
+                                    reply_markup=reply_markup)
+        return
+
+    if update.message.text == Action.VIEW_AD.value:
+        keyboard = [
+            [
+                InlineKeyboardButton("Свої", callback_data=Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value),
+                InlineKeyboardButton("Інші", callback_data=Action.GET_LIST_OF_ADVERTISEMENTS.value),
+            ],
+            [
+                InlineKeyboardButton("На головну", callback_data=Action.MAIN.value),
+                InlineKeyboardButton("Назад", callback_data=Action.BACK.value),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Я отримав твій логін. Чекаю на пароль",
+                                    reply_markup=reply_markup)
         return
 
     if update.message.text == Action.GET_LIST_OF_ADVERTISEMENTS.value:
@@ -147,10 +200,20 @@ Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
 # context. Error handlers also receive the raised TelegramError object in error.
 def start(update, context):
     """Send a message when the command /start is issued."""
+    keyboard = [
+        [
+            InlineKeyboardButton("Реєстрація", callback_data=Action.REGISTRATION.value),
+            InlineKeyboardButton("Авторизація", callback_data=Action.AUTHORIZATION.value),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     chat_id = update.message.chat_id
-    context.bot.send_message(chat_id, 'Hi! Send your login')
-    user = update.message.from_user
-    users[user['id']] = {'action': Action.LOGIN_ENTERING, 'cache': dict()}
+    msg = context.bot.send_message(chat_id, 'Привіт! Обери дію', reply_markup=reply_markup)
+
+    main_id = msg.message_id
+    u = User(main_id)
+    user_id = update.message.from_user['id']
+    users[user_id] = u
 
 
 def help(update, context):
@@ -168,6 +231,153 @@ def error(update, context):
     logger.warning('Update "%s" caused error "%s"', update, context.error)
 
 
+def authorization(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.AUTHORIZATION.value == query.data:
+        user_id = query.from_user['id']
+        u: User = users[user_id]
+        u.current_action = Action.LOGIN_ENTERING
+        chat_id = query.message.chat.id
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Пришліть логін")
+
+
+def main_page(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.MAIN.value == query.data:
+        user_id = query.from_user['id']
+        u: User = users[user_id]
+        u.current_action = Action.LOGIN_ENTERING
+        chat_id = query.message.chat.id
+        keyboard = [
+            [
+                InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
+                InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
+                InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Головна",
+                                    reply_markup=reply_markup)
+
+
+def view_ad(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.VIEW_AD.value == query.data:
+        user_id = query.from_user['id']
+        u: User = users[user_id]
+        u.current_action = Action.LOGIN_ENTERING
+        chat_id = query.message.chat.id
+        keyboard = [
+            [
+                InlineKeyboardButton("Свої", callback_data=Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value),
+                InlineKeyboardButton("Інші", callback_data=Action.GET_LIST_OF_ADVERTISEMENTS.value),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Чиї оголошення хочете подивитись?",
+                                    reply_markup=reply_markup)
+
+
+def view_created_ads(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value == query.data:
+        user_id = query.from_user['id']
+        u: User = users[user_id]
+        chat_id = query.message.chat.id
+
+        if u.cache.get('paged', None) is None:
+            u.cache['paged'] = {
+                'page': 1,
+                'current_ad': 0,
+                'ads': u.api.get_own_advertisements(1)
+            }
+        keyboard = [
+            [
+                InlineKeyboardButton("<", callback_data='prev_ad'),
+                InlineKeyboardButton("Редагувати", callback_data='null'),
+                InlineKeyboardButton(">", callback_data='next_ad'),
+            ],
+            [
+                InlineKeyboardButton("Видалити", callback_data='null'),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        paged = u.cache['paged']
+        ads = paged['ads']
+        i = paged['current_ad']
+        ad = ads[i]
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text=f'''
+Pet name: {ad['pet-name']}
+Signs: {ad['signs']}
+Age: {ad['age']}
+Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
+Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
+''',
+                                    reply_markup=reply_markup)
+
+
+def iterate_on_ads(update, context):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
+    u.current_action = Action.LOGIN_ENTERING
+    chat_id = query.message.chat.id
+
+    if 'next_ad' == query.data:
+        paged = u.cache['paged']
+        ads = paged['ads']
+        i = paged['current_ad']
+
+        if i + 1 < len(ads):
+            u.cache['paged']['current_ad'] = i + 1
+        else:
+            u.cache['paged'] = {
+                'page': paged['page'] + 1,
+                'current_ad': 0,
+                'ads': u.api.get_own_advertisements(paged['page'] + 1)
+            }
+        view_created_ads(update, context)
+        return
+
+    if 'prev_ad' == query.data:
+        paged = u.cache['paged']
+        i = paged['current_ad']
+
+        if i - 1 >= 0:
+            u.cache['paged']['current_ad'] = i - 1
+        else:
+            if u.cache['paged'] - 1 >= 1:
+                u.cache['paged'] = {
+                    'page': paged['page'] - 1,
+                    'current_ad': 0,
+                    'ads': u.api.get_own_advertisements(paged['page'] - 1)
+                }
+        view_created_ads(update, context)
+        return
+
+
+def call_query_handler(update, context):
+    for f in [authorization, view_ad, view_created_ads, iterate_on_ads]:
+        f(update, context)
+
+
 def main():
     """Start the bot."""
     # Create the Updater and pass it your bot's token.
@@ -182,6 +392,10 @@ def main():
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help))
     # dp.add_handler(MessageHandler(Filters.text & (~Filters.command), echo))
+    dp.add_handler(CallbackQueryHandler(call_query_handler))
+    # dp.add_handler(CallbackQueryHandler(authorization))
+    # dp.add_handler(CallbackQueryHandler(view_ad))
+    # dp.add_handler(CallbackQueryHandler(view_created_ads))
 
     # on noncommand i.e message - echo the message on Telegram
     dp.add_handler(MessageHandler(Filters.text, msg_handler))
@@ -196,7 +410,6 @@ def main():
     # SIGTERM or SIGABRT. This should be used most of the time, since
     # start_polling() is non-blocking and will stop the bot gracefully.
     updater.idle()
-
 
 if __name__ == '__main__':
     main()
