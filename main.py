@@ -307,17 +307,17 @@ def _display_ad(update,context):
             InlineKeyboardButton(">", callback_data='next_ad'),
         ],
         [
-            InlineKeyboardButton("Видалити", callback_data='null'),
+            InlineKeyboardButton("Видалити", callback_data='delete_ad'),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     paged = u.cache['paged']
     ads = paged['ads']
-    i = paged['current_ad']
-    ad = ads[i]
     if len(ads) == 0:
         msg_txt = "Пробач,я нічого не знайшов :("
     else:
+        i = paged['current_ad']
+        ad = ads[i]
         msg_txt = f'''
     Pet name: {ad['pet-name']}
     Signs: {ad['signs']}
@@ -345,7 +345,6 @@ def iterate_on_ads(update, context):
     user_id = query.from_user['id']
     u: User = users[user_id]
     u.current_action = Action.LOGIN_ENTERING
-    chat_id = query.message.chat.id
 
     if 'next_ad' == query.data:
         paged = u.cache['paged']
@@ -386,9 +385,31 @@ def iterate_on_ads(update, context):
         _display_ad(update, context)
         return
 
+def delete_ad(update, context):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
+    u.current_action = Action.LOGIN_ENTERING
+
+    if 'delete_ad' == query.data:
+        paged = u.cache['paged']
+        ads = paged['ads']
+        i = paged['current_ad']
+        ad = ads[i]
+        ad_id = ad['id']
+
+        u.api.delete_ad(ad_id)
+        u.cache['paged'] = {
+            'page': 1,
+            'current_ad': 0,
+            'ads': u.api.get_own_advertisements(1)
+        }
+
+        _display_ad(update,context)
 
 def call_query_handler(update, context):
-    for f in [authorization, view_ad, view_created_ads, iterate_on_ads]:
+    for f in [authorization, view_ad, view_created_ads, iterate_on_ads, delete_ad]:
         f(update, context)
 
 
