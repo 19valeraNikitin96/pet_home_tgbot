@@ -1,7 +1,6 @@
 #!/usr/bin python3
 # -*- coding: utf-8 -*-
 # This program is dedicated to the public domain under the CC0 license.
-
 import logging
 import os
 from enum import Enum
@@ -35,8 +34,20 @@ class Action(Enum):
     BACK = 'back'
 
 
-# {12345: {'action': Action.LOGIN_ENTERING, 'cache': dict()}}
-users = dict()
+class AdType(Enum):
+    FOUND = 'знайшов'
+    LOST = 'загубив'
+    OBSERVED = 'спостерігаю'
+
+    @staticmethod
+    def get_by(ua_name: str):
+        ua_name = ua_name.strip().lower()
+        for t in AdType:
+            if t.value == ua_name:
+                return t
+
+        raise Exception('Could not map from UA name to type')
+
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -54,6 +65,38 @@ class User(object):
         self.current_action = Action.WELCOME
 
 
+# {12345: {'action': Action.LOGIN_ENTERING, 'cache': dict()}}
+users = dict()
+# use next lines for debug
+# _tg_number = <USER TG ID>
+# _msg_id = 300
+# _tmp_user = User(_msg_id)
+# _tmp_user.api = PetHomeImpl('Bogdan1980', '12345', PET_HOME_ADDR, PET_HOME_PORT)
+# _tmp_user.cache = dict()
+# _tmp_user.current_action = Action.MAIN
+# users[_tg_number] = _tmp_user
+
+# button constans
+_main = InlineKeyboardButton("На головну 🔙", callback_data=Action.MAIN.value)
+
+
+def _display_main_page(context, user_id, chat_id, text = "Головна"):
+    u: User = users[user_id]
+    u.current_action = Action.MAIN
+    keyboard = [
+        [
+            InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
+            InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
+            InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.editMessageText(chat_id=chat_id,
+                                message_id=u.msg_id,
+                                text=text,
+                                reply_markup=reply_markup)
+
+
 def msg_handler(update, context):
     user = update.message.from_user
     user_id = user['id']
@@ -65,7 +108,7 @@ def msg_handler(update, context):
         username = update.message.text
         u.cache['username'] = username
         context.bot.delete_message(chat_id=chat_id,
-                                    message_id=update.message.message_id)
+                                   message_id=update.message.message_id)
         context.bot.editMessageText(chat_id=chat_id,
                                     message_id=u.msg_id,
                                     text="Я отримав твій логін. Чекаю на пароль")
@@ -112,88 +155,51 @@ def msg_handler(update, context):
                                     reply_markup=reply_markup)
         return
 
-    if update.message.text == Action.VIEW_AD.value:
-        keyboard = [
-            [
-                InlineKeyboardButton("Свої", callback_data=Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value),
-                InlineKeyboardButton("Інші", callback_data=Action.GET_LIST_OF_ADVERTISEMENTS.value),
-            ],
-            [
-                InlineKeyboardButton("На головну", callback_data=Action.MAIN.value),
-                InlineKeyboardButton("Назад", callback_data=Action.BACK.value),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        context.bot.editMessageText(chat_id=chat_id,
-                                    message_id=u.msg_id,
-                                    text="Я отримав твій логін. Чекаю на пароль",
-                                    reply_markup=reply_markup)
-        return
+    if action == Action.CREATE_AD:
+        '''
+Джеррі
+Сіре вушко, чорний носик
+3
+знайшов
+Київ, Солом'янський, Берегівська
+13.05.2021
+        '''
+        text = 'Оголошення успішно створено!'
+        try:
+            ad_data: str = update.message.text
+            lines = ad_data.split('\n')
+            pet_name = lines[0].strip()
+            signs = [x.strip() for x in lines[1].split(',')]
+            age = int(lines[2])
+            ad_type = AdType.get_by(lines[3]).name
+            split_location = lines[4].split(',')
+            location = {
+                "city": split_location[0].strip(),
+                "district": split_location[1].strip(),
+                "street": split_location[2].strip()
+            }
+            d_data = lines[5].split('.')
+            d = {
+                'day': int(d_data[0]),
+                'month': int(d_data[1]),
+                'year': int(d_data[2])
+            }
+            req_body = {
+                "pet-name": pet_name,
+                "signs": signs,
+                "age": age,
+                "type": ad_type,
+                "location": location,
+                "date": d
+            }
+            u.api.create_ad(req_body)
+        except Exception:
+            text = "Сталася помилка. Оголошення не створено"
 
-    if update.message.text == Action.GET_LIST_OF_ADVERTISEMENTS.value:
-        api: PetHome = users[user['id']]['cache']['api']
-        # TODO page is hardcoded
-        ads = api.get_other_advertisements(1)
-        resp = ""
-        for ad in ads:
-            info = f"""
-Pet name: {ad['pet-name']}
-Signs: {ad['signs']}
-Age: {ad['age']}
-Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
-Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
-
-"""
-            resp = f"{resp}{info}"
-        update.message.reply_text(resp)
-        return
-
-    if update.message.text == Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value:
-        api: PetHome = users[user['id']]['cache']['api']
-        # TODO page is hardcoded
-        ads = api.get_own_advertisements(1)
-        resp = ""
-        for ad in ads:
-            info = f"""
-ID: {ad['id']}
-Pet name: {ad['pet-name']}
-Signs: {ad['signs']}
-Age: {ad['age']}
-Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
-Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
-
-"""
-            resp = f"{resp}{info}"
-        update.message.reply_text(resp)
-        return
-
-    if update.message.text == Action.CREATE_AD.value:
-        update.message.reply_text('Send info using JSON format')
-        users[user['id']]['action'] = Action.WAITING_FOR_AD_INFO
-        return
-
-    if update.message.text == Action.DEL_AD.value:
-        update.message.reply_text('Send advertisement ID')
-        users[user['id']]['action'] = Action.WAITING_FOR_AD_ID
-        return
-
-    if users[user['id']]['action'] == Action.WAITING_FOR_AD_INFO:
-        users[user['id']]['action'] = Action.MAIN
-        api: PetHome = users[user['id']]['cache']['api']
-        # TODO we get in JSON format; we need to do it more easier for users (filling date step by step)
-        ad_info = update.message.text
-        api.create_ad(ad_info)
-        update.message.reply_text('Advertisement has been created')
-        return
-
-    if users[user['id']]['action'] == Action.WAITING_FOR_AD_ID:
-        users[user['id']]['action'] = Action.MAIN
-        api: PetHome = users[user['id']]['cache']['api']
-        # TODO we get in JSON format; we need to do it more easier for users (filling date step by step)
-        ad_id = update.message.text
-        api.delete_ad(ad_id)
-        update.message.reply_text('Advertisement has been deleted')
-        return
+        context.bot.delete_message(chat_id=chat_id,
+                                   message_id=update.message.message_id)
+        u.current_action = Action.MAIN
+        _display_main_page(context, user_id, chat_id, text)
 
 
 # Define a few command handlers. These usually take the two arguments update and
@@ -250,22 +256,9 @@ def main_page(update, context):
     query.answer()
 
     if Action.MAIN.value == query.data:
-        user_id = query.from_user['id']
-        u: User = users[user_id]
-        u.current_action = Action.LOGIN_ENTERING
-        chat_id = query.message.chat.id
-        keyboard = [
-            [
-                InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
-                InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
-                InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        context.bot.editMessageText(chat_id=chat_id,
-                                    message_id=u.msg_id,
-                                    text="Головна",
-                                    reply_markup=reply_markup)
+        user_id = update.callback_query.from_user['id']
+        chat_id = update.callback_query.message.chat.id
+        _display_main_page(context, user_id, chat_id)
 
 
 def view_ad(update, context):
@@ -275,12 +268,14 @@ def view_ad(update, context):
     if Action.VIEW_AD.value == query.data:
         user_id = query.from_user['id']
         u: User = users[user_id]
-        u.current_action = Action.LOGIN_ENTERING
         chat_id = query.message.chat.id
         keyboard = [
             [
                 InlineKeyboardButton("Свої", callback_data=Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value),
                 InlineKeyboardButton("Інші", callback_data=Action.GET_LIST_OF_ADVERTISEMENTS.value),
+            ],
+            [
+                _main
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -289,7 +284,8 @@ def view_ad(update, context):
                                     text="Чиї оголошення хочете подивитись?",
                                     reply_markup=reply_markup)
 
-def _display_ad(update,context):
+
+def _display_ad(update, context):
     user_id = update.callback_query.from_user['id']
     u: User = users[user_id]
     chat_id = update.callback_query.message.chat.id
@@ -308,6 +304,9 @@ def _display_ad(update,context):
         ],
         [
             InlineKeyboardButton("Видалити", callback_data='delete_ad'),
+        ],
+        [
+            _main
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -328,15 +327,16 @@ def _display_ad(update,context):
 
     context.bot.editMessageText(chat_id=chat_id,
                                 message_id=u.msg_id,
-                                text= msg_txt,
+                                text=msg_txt,
                                 reply_markup=reply_markup)
+
 
 def view_created_ads(update, context):
     query = update.callback_query
     query.answer()
 
-    if Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value == query.data: #or query.data == "next_ad":
-       _display_ad(update,context)
+    if Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value == query.data:
+        _display_ad(update, context)
 
 
 def iterate_on_ads(update, context):
@@ -344,7 +344,6 @@ def iterate_on_ads(update, context):
     query.answer()
     user_id = query.from_user['id']
     u: User = users[user_id]
-    u.current_action = Action.LOGIN_ENTERING
 
     if 'next_ad' == query.data:
         paged = u.cache['paged']
@@ -363,7 +362,7 @@ def iterate_on_ads(update, context):
                     'current_ad': 0,
                     'ads': next_ads
                 }
-        _display_ad(update,context)
+        _display_ad(update, context)
         return
 
     if 'prev_ad' == query.data:
@@ -373,24 +372,25 @@ def iterate_on_ads(update, context):
         if i - 1 >= 0:
             u.cache['paged']['current_ad'] = i - 1
         else:
-            prev_page = paged['page'] - 1
-            prev_ads = u.api.get_own_advertisements(prev_page)
+            if paged['page'] > 1:
+                prev_page = paged['page'] - 1
+                prev_ads = u.api.get_own_advertisements(prev_page)
 
-            if prev_page >= 0:
-                u.cache['paged'] = {
-                    'page': prev_page,
-                    'current_ad': 0,
-                    'ads': prev_ads
-                }
+                if prev_page >= 0:
+                    u.cache['paged'] = {
+                        'page': prev_page,
+                        'current_ad': 0,
+                        'ads': prev_ads
+                    }
         _display_ad(update, context)
         return
+
 
 def delete_ad(update, context):
     query = update.callback_query
     query.answer()
     user_id = query.from_user['id']
     u: User = users[user_id]
-    u.current_action = Action.LOGIN_ENTERING
 
     if 'delete_ad' == query.data:
         paged = u.cache['paged']
@@ -406,10 +406,48 @@ def delete_ad(update, context):
             'ads': u.api.get_own_advertisements(1)
         }
 
-        _display_ad(update,context)
+        _display_ad(update, context)
+
+
+def create_ad(update, context):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
+
+    if Action.CREATE_AD.value == query.data:
+        u.current_action = Action.CREATE_AD
+        chat_id = query.message.chat.id
+        text = '''
+Надішліть необхідну інформацію згідно шаблону:
+<Ім'я тварини>
+<Ознаки тварини> (ознаки через кому)
+<Приблизний вік> (тільки цілі числа)
+<Тип оголошення> (знайшов, загубив, спостерігаю)
+<Місце> (місто, район, вулиця)
+<Дата> (день.місяць.рік)
+Приклад:
+Джеррі
+Сіре вушко, чорний носик
+3
+знайшов
+Київ, Солом'янський, Берегівська
+13.05.2021
+'''
+        keyboard = [
+            [
+                _main
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text=text,
+                                    reply_markup=reply_markup)
+
 
 def call_query_handler(update, context):
-    for f in [authorization, view_ad, view_created_ads, iterate_on_ads, delete_ad]:
+    for f in [authorization, view_ad, view_created_ads, iterate_on_ads, delete_ad, main_page, create_ad]:
         f(update, context)
 
 
@@ -445,6 +483,7 @@ def main():
     # SIGTERM or SIGABRT. This should be used most of the time, since
     # start_polling() is non-blocking and will stop the bot gracefully.
     updater.idle()
+
 
 if __name__ == '__main__':
     main()

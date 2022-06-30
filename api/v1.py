@@ -56,10 +56,9 @@ class PetHomeImpl(PetHome):
             ads.append(ad)
         return ads
 
-    def create_ad(self, data: str) -> int:
-        payload = data
+    def create_ad(self, data: dict) -> int:
         req = requests.post(f"{self.protocol}://{self.addr}:{self.port}/v1/advertisements",
-                            json=payload,
+                            json=data,
                             headers={'Authorization': f"Bearer {self.token}"})
 
         if req.status_code != 200:
