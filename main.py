@@ -64,6 +64,9 @@ class User(object):
         self.api: PetHome = None
         self.current_action = Action.WELCOME
 
+    def clear_cache(self):
+        self.cache = dict()
+
 
 # {12345: {'action': Action.LOGIN_ENTERING, 'cache': dict()}}
 users = dict()
@@ -83,6 +86,7 @@ _main = InlineKeyboardButton("На головну 🔙", callback_data=Action.MA
 def _display_main_page(context, user_id, chat_id, text = "Головна"):
     u: User = users[user_id]
     u.current_action = Action.MAIN
+    u.clear_cache()
     keyboard = [
         [
             InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
@@ -285,7 +289,7 @@ def view_ad(update, context):
                                     reply_markup=reply_markup)
 
 
-def _display_ad(update, context):
+def _display_ad(update, context, keyboard, ad_generator):
     user_id = update.callback_query.from_user['id']
     u: User = users[user_id]
     chat_id = update.callback_query.message.chat.id
@@ -294,8 +298,34 @@ def _display_ad(update, context):
         u.cache['paged'] = {
             'page': 1,
             'current_ad': 0,
-            'ads': u.api.get_own_advertisements(1)
+            'ads': ad_generator(1)
         }
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    paged = u.cache['paged']
+    ads = paged['ads']
+    if len(ads) == 0:
+        msg_txt = "Пробач,я нічого не знайшов :("
+    else:
+        i = paged['current_ad']
+        ad = ads[i]
+        msg_txt = f'''
+        Pet name: {ad['pet-name']}
+        Signs: {ad['signs']}
+        Age: {ad['age']}
+        Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
+        Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
+        '''
+
+    context.bot.editMessageText(chat_id=chat_id,
+                                message_id=u.msg_id,
+                                text=msg_txt,
+                                reply_markup=reply_markup)
+
+
+def _display_own_ad(update, context):
+    user_id = update.callback_query.from_user['id']
+    u: User = users[user_id]
+    u.current_action = Action.GET_LIST_OF_CREATED_ADVERTISEMENTS
     keyboard = [
         [
             InlineKeyboardButton("<", callback_data='prev_ad'),
@@ -309,26 +339,23 @@ def _display_ad(update, context):
             _main
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    paged = u.cache['paged']
-    ads = paged['ads']
-    if len(ads) == 0:
-        msg_txt = "Пробач,я нічого не знайшов :("
-    else:
-        i = paged['current_ad']
-        ad = ads[i]
-        msg_txt = f'''
-    Pet name: {ad['pet-name']}
-    Signs: {ad['signs']}
-    Age: {ad['age']}
-    Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
-    Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
-    '''
+    _display_ad(update, context, keyboard, u.api.get_own_advertisements)
 
-    context.bot.editMessageText(chat_id=chat_id,
-                                message_id=u.msg_id,
-                                text=msg_txt,
-                                reply_markup=reply_markup)
+
+def _display_other_ad(update, context):
+    user_id = update.callback_query.from_user['id']
+    u: User = users[user_id]
+    u.current_action = Action.GET_LIST_OF_ADVERTISEMENTS
+    keyboard = [
+        [
+            InlineKeyboardButton("<", callback_data='prev_ad'),
+            InlineKeyboardButton(">", callback_data='next_ad'),
+        ],
+        [
+            _main
+        ]
+    ]
+    _display_ad(update, context, keyboard, u.api.get_other_advertisements)
 
 
 def view_created_ads(update, context):
@@ -336,7 +363,15 @@ def view_created_ads(update, context):
     query.answer()
 
     if Action.GET_LIST_OF_CREATED_ADVERTISEMENTS.value == query.data:
-        _display_ad(update, context)
+        _display_own_ad(update, context)
+
+
+def view_other_ads(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.GET_LIST_OF_ADVERTISEMENTS.value == query.data:
+        _display_other_ad(update, context)
 
 
 def iterate_on_ads(update, context):
@@ -345,6 +380,18 @@ def iterate_on_ads(update, context):
     user_id = query.from_user['id']
     u: User = users[user_id]
 
+    if u.current_action == Action.GET_LIST_OF_ADVERTISEMENTS:
+        _iterate_on_ads(update, context, u.api.get_other_advertisements, _display_other_ad)
+
+    if u.current_action == Action.GET_LIST_OF_CREATED_ADVERTISEMENTS:
+        _iterate_on_ads(update, context, u.api.get_own_advertisements, _display_own_ad)
+
+
+def _iterate_on_ads(update, context, ad_generator, renderer):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
     if 'next_ad' == query.data:
         paged = u.cache['paged']
         ads = paged['ads']
@@ -354,7 +401,7 @@ def iterate_on_ads(update, context):
             u.cache['paged']['current_ad'] = i + 1
         else:
             next_page = paged['page'] + 1
-            next_ads = u.api.get_own_advertisements(next_page)
+            next_ads = ad_generator(next_page)
 
             if len(next_ads) != 0:
                 u.cache['paged'] = {
@@ -362,7 +409,7 @@ def iterate_on_ads(update, context):
                     'current_ad': 0,
                     'ads': next_ads
                 }
-        _display_ad(update, context)
+        renderer(update, context)
         return
 
     if 'prev_ad' == query.data:
@@ -374,7 +421,7 @@ def iterate_on_ads(update, context):
         else:
             if paged['page'] > 1:
                 prev_page = paged['page'] - 1
-                prev_ads = u.api.get_own_advertisements(prev_page)
+                prev_ads = ad_generator(prev_page)
 
                 if prev_page >= 0:
                     u.cache['paged'] = {
@@ -382,7 +429,7 @@ def iterate_on_ads(update, context):
                         'current_ad': 0,
                         'ads': prev_ads
                     }
-        _display_ad(update, context)
+        renderer(update, context)
         return
 
 
@@ -406,7 +453,7 @@ def delete_ad(update, context):
             'ads': u.api.get_own_advertisements(1)
         }
 
-        _display_ad(update, context)
+        _display_own_ad(update, context)
 
 
 def create_ad(update, context):
@@ -447,7 +494,7 @@ def create_ad(update, context):
 
 
 def call_query_handler(update, context):
-    for f in [authorization, view_ad, view_created_ads, iterate_on_ads, delete_ad, main_page, create_ad]:
+    for f in [authorization, view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, main_page, create_ad]:
         f(update, context)
 
 
