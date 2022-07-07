@@ -69,4 +69,33 @@ class PetHomeImpl(PetHome):
 
     def delete_ad(self, id: int):
         requests.delete(f"{self.protocol}://{self.addr}:{self.port}/v1/advertisements/{id}",
+                        headers={'Authorization': f"Bearer {self.token}"})
+
+    def get_account(self) -> dict:
+        req = requests.get(f"{self.protocol}://{self.addr}:{self.port}/v1/users",
                            headers={'Authorization': f"Bearer {self.token}"})
+
+        resp = req.json()
+        return resp
+
+    def create_account(self, data: dict) -> int:
+        req = requests.post(f"{self.protocol}://{self.addr}:{self.port}/v1/users",
+                            json=data,
+                            headers={'Authorization': f"Bearer {self.token}"})
+
+        if req.status_code != 200:
+            raise Exception('Could not register user')
+
+        resp = req.json()
+        return resp['id']
+
+    def update_account(self, data: dict) -> int:
+        req = requests.put(f"{self.protocol}://{self.addr}:{self.port}/v1/users",
+                           json=data,
+                           headers={'Authorization': f"Bearer {self.token}"})
+
+        if req.status_code != 200:
+            raise Exception('Could not update user')
+
+        resp = req.json()
+        return resp['id']

@@ -24,7 +24,8 @@ class Action(Enum):
     PASSWORD_ENTERING = 'password_entering'
     MAIN = 'main'
     VIEW_AD = 'view_ad'
-    VIEW_ACCOUNT = 'view_account'
+    VIEW_OWN_ACCOUNT = 'view_own_account'
+    UPDATE_ACCOUNT = 'update_account'
     GET_LIST_OF_ADVERTISEMENTS = 'get_list_of_advertisements'
     GET_LIST_OF_CREATED_ADVERTISEMENTS = 'get_list_of_created_advertisements'
     CREATE_AD = 'create_advertisement'
@@ -91,7 +92,7 @@ def _display_main_page(context, user_id, chat_id, text = "Головна"):
         [
             InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
             InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
-            InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
+            InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_OWN_ACCOUNT.value),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -149,7 +150,7 @@ def msg_handler(update, context):
             [
                 InlineKeyboardButton("Створити", callback_data=Action.CREATE_AD.value),
                 InlineKeyboardButton("Оголошення", callback_data=Action.VIEW_AD.value),
-                InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_ACCOUNT.value),
+                InlineKeyboardButton("Акаунт", callback_data=Action.VIEW_OWN_ACCOUNT.value),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -170,8 +171,8 @@ def msg_handler(update, context):
         '''
         text = 'Оголошення успішно створено!'
         try:
-            ad_data: str = update.message.text
-            lines = ad_data.split('\n')
+            account_data: str = update.message.text
+            lines = account_data.split('\n')
             pet_name = lines[0].strip()
             signs = [x.strip() for x in lines[1].split(',')]
             age = int(lines[2])
@@ -202,7 +203,46 @@ def msg_handler(update, context):
 
         context.bot.delete_message(chat_id=chat_id,
                                    message_id=update.message.message_id)
-        u.current_action = Action.MAIN
+        _display_main_page(context, user_id, chat_id, text)
+
+    if action == Action.UPDATE_ACCOUNT:
+        """ Template
+        Ім'я: Тарас
+        Фамілія: Шевченко
+        Юзернейм: shevchenko_ua
+        Моб. телефони: 0501112233, 0504445566
+        Email адреси: t.shevchenko@test1.ua, tshev@test2.ua
+        """
+        text = 'Акаунт успішно оновлено!'
+        try:
+            account_data: str = update.message.text
+            lines = account_data.split('\n')
+            data = dict()
+            for line in lines:
+                spl = line.split(':')
+                key = spl[0].strip().lower()
+                value = spl[1].strip()
+                data[key] = value
+
+            new_data = dict()
+            for key in data.keys():
+                if key == "ім'я":
+                    new_data['firstname'] = data[key]
+                if key == "фамілія":
+                    new_data['lastname'] = data[key]
+                if key == "юзернейм":
+                    new_data['username'] = data[key]
+                if key == "моб. телефони":
+                    new_data['phone-numbers'] = data[key]
+                if key == "email адреси":
+                    new_data['email-addresses'] = data[key]
+
+            u.api.update_account(new_data)
+        except Exception:
+            text = "Сталася помилка. Акаунт не оновлено"
+
+        context.bot.delete_message(chat_id=chat_id,
+                                   message_id=update.message.message_id)
         _display_main_page(context, user_id, chat_id, text)
 
 
@@ -493,8 +533,73 @@ def create_ad(update, context):
                                     reply_markup=reply_markup)
 
 
+def display_own_account(update, context):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
+
+    if Action.VIEW_OWN_ACCOUNT.value == query.data:
+        chat_id = query.message.chat.id
+        u.current_action = Action.VIEW_OWN_ACCOUNT
+        keyboard = [
+            [
+                InlineKeyboardButton("Оновити", callback_data=Action.UPDATE_ACCOUNT.value),
+            ],
+            [
+                _main
+            ]
+        ]
+        account = u.api.get_account()
+        txt = f"""
+Ім'я: {account['firstname']}
+Фамілія: {account['lastname']}
+Юзернейм: {account['username']}
+Моб. телефони: {account['phone-numbers']}
+Email адреси: {account['email-addresses']}
+        """
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text=txt,
+                                    reply_markup=reply_markup)
+
+
+def update_account(update, context):
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user['id']
+    u: User = users[user_id]
+
+    if Action.UPDATE_ACCOUNT.value == query.data:
+        chat_id = query.message.chat.id
+        u.current_action = Action.UPDATE_ACCOUNT
+        keyboard = [
+            [
+                _main
+            ]
+        ]
+        txt = f"""
+Надішлліть інформацію використовуючи шаблон:
+Ім'я: Тарас
+Фамілія: Шевченко
+Юзернейм: shevchenko_ua
+Моб. телефони: 0501112233, 0504445566
+Email адреси: t.shevchenko@test1.ua, tshev@test2.ua
+"""
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text=txt,
+                                    reply_markup=reply_markup)
+
+
 def call_query_handler(update, context):
-    for f in [authorization, view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, main_page, create_ad]:
+    ad_handlers = [view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, create_ad]
+    user_handlers = [authorization, display_own_account, update_account]
+    service_handlers = [main_page]
+
+    for f in ad_handlers + user_handlers + service_handlers:
         f(update, context)
 
 
