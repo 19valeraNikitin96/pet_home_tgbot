@@ -29,6 +29,7 @@ class Action(Enum):
     GET_LIST_OF_ADVERTISEMENTS = 'get_list_of_advertisements'
     GET_LIST_OF_CREATED_ADVERTISEMENTS = 'get_list_of_created_advertisements'
     CREATE_AD = 'create_advertisement'
+    EDIT_AD = 'edit_ad'
     DEL_AD = 'delete_advertisement'
     WAITING_FOR_AD_INFO = 'waiting_for_add_info'
     WAITING_FOR_AD_ID = 'waiting_for_add_id'
@@ -246,6 +247,53 @@ def msg_handler(update, context):
         _display_main_page(context, user_id, chat_id, text)
 
 
+    if action == Action.EDIT_AD:
+        paged = u.cache['paged']
+        ads = paged['ads']
+        i = paged['current_ad']
+
+        current_ad = ads[i]
+        current_ad_id = current_ad['id']
+
+        try:
+                account_data: str = update.message.text
+                lines = account_data.split('\n')
+                pet_name = lines[0].strip()
+                signs = [x.strip() for x in lines[1].split(',')]
+                age = int(lines[2])
+                ad_type = AdType.get_by(lines[3]).name
+                split_location = lines[4].split(',')
+                location = {
+                    "city": split_location[0].strip(),
+                    "district": split_location[1].strip(),
+                    "street": split_location[2].strip()
+                }
+                d_data = lines[5].split('.')
+                d = {
+                    'day': int(d_data[0]),
+                    'month': int(d_data[1]),
+                    'year': int(d_data[2])
+                }
+                req_body = {
+                    "pet-name": pet_name,
+                    "signs": signs,
+                    "age": age,
+                    "type": ad_type,
+                    "location": location,
+                    "date": d
+                }
+
+                updated_ad = u.api.update_ad(req_body, current_ad_id)
+                text = "Оголошення успішно оновлено"
+
+        except Exception:
+            text = "Сталася помилка. Оголошення не було оновлено"
+
+        context.bot.delete_message(chat_id=chat_id,
+                                   message_id=update.message.message_id)
+        _display_main_page(context, user_id, chat_id, text)
+
+
 # Define a few command handlers. These usually take the two arguments update and
 # context. Error handlers also receive the raised TelegramError object in error.
 def start(update, context):
@@ -349,11 +397,11 @@ def _display_ad(update, context, keyboard, ad_generator):
         i = paged['current_ad']
         ad = ads[i]
         msg_txt = f'''
-        Pet name: {ad['pet-name']}
-        Signs: {ad['signs']}
-        Age: {ad['age']}
-        Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
-        Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
+Pet name: {ad['pet-name']}
+Signs: {ad['signs']}
+Age: {ad['age']}
+Location: {ad['location']['city']}, {ad['location']['district']}, {ad['location']['street']}
+Date: {ad['date']['day']}.{ad['date']['month']}.{ad['date']['year']}
         '''
 
     context.bot.editMessageText(chat_id=chat_id,
@@ -369,7 +417,7 @@ def _display_own_ad(update, context):
     keyboard = [
         [
             InlineKeyboardButton("<", callback_data='prev_ad'),
-            InlineKeyboardButton("Редагувати", callback_data='null'),
+            InlineKeyboardButton("Редагувати", callback_data=Action.EDIT_AD.value),
             InlineKeyboardButton(">", callback_data='next_ad'),
         ],
         [
@@ -427,6 +475,8 @@ def iterate_on_ads(update, context):
         _iterate_on_ads(update, context, u.api.get_own_advertisements, _display_own_ad)
 
 
+
+
 def _iterate_on_ads(update, context, ad_generator, renderer):
     query = update.callback_query
     query.answer()
@@ -471,6 +521,47 @@ def _iterate_on_ads(update, context, ad_generator, renderer):
                     }
         renderer(update, context)
         return
+
+def update_ad(update, context):
+    query = update.callback_query
+    user_id = query.from_user['id']
+    u:User = users[user_id]
+
+    if Action.EDIT_AD.value == query.data:
+        u.current_action = Action.EDIT_AD
+        chat_id = query.message.chat.id
+        text = '''
+    Надішліть необхідну інформацію згідно шаблону для оновлення:
+    <Ім'я тварини>
+    <Ознаки тварини> (ознаки через кому)
+    <Приблизний вік> (тільки цілі числа)
+    <Тип оголошення> (знайшов, загубив, спостерігаю)
+    <Місце> (місто, район, вулиця)
+    <Дата> (день.місяць.рік)
+    Приклад:
+    Джеррі
+    Сіре вушко, чорний носик
+    3
+    знайшов
+    Київ, Солом'янський, Берегівська
+    13.05.2021
+    '''
+        keyboard = [
+            [
+                _main
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text=text,
+                                    reply_markup=reply_markup)
+
+
+
+
+
+
 
 
 def delete_ad(update, context):
@@ -595,7 +686,7 @@ Email адреси: t.shevchenko@test1.ua, tshev@test2.ua
 
 
 def call_query_handler(update, context):
-    ad_handlers = [view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, create_ad]
+    ad_handlers = [view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, create_ad, update_ad]
     user_handlers = [authorization, display_own_account, update_account]
     service_handlers = [main_page]
 
