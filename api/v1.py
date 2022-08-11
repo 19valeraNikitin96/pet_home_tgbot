@@ -53,6 +53,7 @@ class PetHomeImpl(PetHome):
         ads = list()
         for id in ids:
             ad = self.get_advertisement_by(id)
+            ad['id'] = id
             ads.append(ad)
         return ads
 
@@ -63,6 +64,17 @@ class PetHomeImpl(PetHome):
 
         if req.status_code != 200:
             raise Exception('Could not create advertisement')
+
+        resp = req.json()
+        return resp['id']
+
+    def update_ad(self, data: dict, id: int) -> int:
+        req = requests.put(f"{self.protocol}://{self.addr}:{self.port}/v1/advertisements/{id}",
+                            json=data,
+                            headers={'Authorization': f"Bearer {self.token}"})
+
+        if req.status_code != 200:
+            raise Exception('Could not update advertisement')
 
         resp = req.json()
         return resp['id']
