@@ -19,6 +19,7 @@ PET_HOME_PORT = os.environ['PET_HOME_PORT']
 class Action(Enum):
     WELCOME = 'welcome'
     REGISTRATION = 'registration'
+    SENDING_REG_DATA = 'sending_reg_data'
     AUTHORIZATION = 'authorization'
     LOGIN_ENTERING = 'login_entering'
     PASSWORD_ENTERING = 'password_entering'
@@ -62,7 +63,7 @@ class User(object):
     def __init__(self, msg_id):
         self.msg_id = msg_id
         self.cache = dict()
-        self.api: PetHome = None
+        self.api: PetHome = PetHomeImpl(None, None, PET_HOME_ADDR, PET_HOME_PORT)
         self.current_action = Action.WELCOME
 
     def clear_cache(self):
@@ -102,12 +103,58 @@ def _display_main_page(context, user_id, chat_id, text = "Головна"):
                                 reply_markup=reply_markup)
 
 
+def _display_welcome_page(context, user_id, chat_id, text):
+    u: User = users[user_id]
+    u.current_action = Action.WELCOME
+    u.clear_cache()
+    keyboard = [
+        [
+            InlineKeyboardButton("Реєстрація", callback_data=Action.REGISTRATION.value),
+            InlineKeyboardButton("Авторизація", callback_data=Action.AUTHORIZATION.value),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.editMessageText(chat_id=chat_id,
+                                message_id=u.msg_id,
+                                text=text,
+                                reply_markup=reply_markup)
+
+
 def msg_handler(update, context):
     user = update.message.from_user
     user_id = user['id']
     u: User = users[user_id]
     action = u.current_action
     chat_id = update.message.chat_id
+
+    if action == Action.SENDING_REG_DATA:
+        text = 'Акаунт успішно створено'
+        try:
+            account_data: str = update.message.text
+            lines = account_data.split('\n')
+            firstname = lines[0].strip()
+            lastname = lines[1].strip()
+            phone_numbers = [x.strip() for x in lines[2].split(',')]
+            email_addresses = [x.strip() for x in lines[3].split(',')]
+            username = lines[4].strip()
+            password = lines[5].strip()
+            location_id = int(lines[6].strip())
+            req_body = {
+                "firstname": firstname,
+                "lastname": lastname,
+                "phone-numbers": phone_numbers,
+                "email-addresses": email_addresses,
+                "username": username,
+                "password": password,
+                "notifications": list(),
+                "location-id": location_id
+            }
+            u.api.create_account(req_body)
+        except Exception:
+            text = "Сталася помилка. Акаунт не створено не створено"
+
+        u.current_action = Action.WELCOME
+        _display_welcome_page(context, user_id, chat_id, text)
 
     if action == Action.LOGIN_ENTERING:
         username = update.message.text
@@ -594,9 +641,22 @@ Email адреси: t.shevchenko@test1.ua, tshev@test2.ua
                                     reply_markup=reply_markup)
 
 
+def registration(update, context):
+    query = update.callback_query
+    query.answer()
+
+    if Action.REGISTRATION.value == query.data:
+        user_id = query.from_user['id']
+        u: User = users[user_id]
+        u.current_action = Action.SENDING_REG_DATA
+        chat_id = query.message.chat.id
+        context.bot.editMessageText(chat_id=chat_id,
+                                    message_id=u.msg_id,
+                                    text="Пришліть реєстраційні дані")
+
 def call_query_handler(update, context):
     ad_handlers = [view_ad, view_created_ads, view_other_ads, iterate_on_ads, delete_ad, create_ad]
-    user_handlers = [authorization, display_own_account, update_account]
+    user_handlers = [registration, authorization, display_own_account, update_account]
     service_handlers = [main_page]
 
     for f in ad_handlers + user_handlers + service_handlers:

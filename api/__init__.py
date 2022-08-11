@@ -6,8 +6,8 @@ class PetHome(object):
         self.addr = addr
         self.port = port
         self.protocol = 'http'
-        self.token = self.auth(username, password)
-        # self.url = f"{self.protocol}://{self.addr}:{self.port}"
+        if username is not None and password is not None:
+            self.token = self.auth(username, password)
 
     def auth(self, username: str, password: str) -> str: ...
 
@@ -26,3 +26,5 @@ class PetHome(object):
     def get_account(self) -> dict: ...
 
     def update_account(self, data: dict) -> int: ...
+
+    def create_account(self, data: dict) -> int: ...

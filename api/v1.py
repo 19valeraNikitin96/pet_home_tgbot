@@ -79,9 +79,8 @@ class PetHomeImpl(PetHome):
         return resp
 
     def create_account(self, data: dict) -> int:
-        req = requests.post(f"{self.protocol}://{self.addr}:{self.port}/v1/users",
-                            json=data,
-                            headers={'Authorization': f"Bearer {self.token}"})
+        req = requests.post(f"{self.protocol}://{self.addr}:{self.port}/v1/users/register",
+                            json=data)
 
         if req.status_code != 200:
             raise Exception('Could not register user')
